@@ -24,7 +24,7 @@ def list_requests():
 def get_request(request_id : int):
     with get_connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute("SELECT id, raw_text, status, created_at FROM requests WHERE id = %s", (request_id,))
+            cur.execute("SELECT id, raw_text, status, created_at FROM requests WHERE id = %s", (request_id,),)
             row = cur.fetchone()
 
     if row is None:
