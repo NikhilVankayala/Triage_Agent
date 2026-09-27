@@ -2,7 +2,7 @@ import json
 from anthropic import Anthropic
 from dotenv import load_dotenv
 import re
-from app.tools.index import lookup_order
+from app.tools.index import lookup_order, propose_action   # add propose_action to the import
 
 load_dotenv()
 
@@ -68,19 +68,65 @@ LOOKUP_ORDER_TOOL = {
     },
 }
 
-def plan(raw_text: str):
+ISSUE_REFUND_TOOL = {
+    "name": "issue_refund",
+    "description": "Issue a refund for an order. Use when a customer is owed money back for a damaged, defective, or wrongly-charged order. Verify the order exists with lookup_order first.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "order_id": {"type": "number", "description": "The order to refund"},
+            "amount_cents": {"type": "number", "description": "Refund amount in cents"},
+            "reason": {"type": "string", "description": "Why the refund is being issued"},
+        },
+        "required": ["order_id", "amount_cents", "reason"],
+    },
+}
+
+CREATE_TICKET_TOOL = {
+    "name": "create_ticket",
+    "description": "Open a support ticket for a human team to follow up on. Use when an issue needs human investigation or can't be resolved by an automated action alone.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "order_id": {"type": "number", "description": "The related order, if the ticket concerns a specific order"},
+            "summary": {"type": "string", "description": "A short description of what the ticket is about"},
+            "priority": {
+                "type": "string",
+                "enum": ["low", "medium", "high"],
+                "description": "How urgent the ticket is",
+            },
+        },
+        "required": ["summary", "priority"],
+    },
+}
+
+SEND_REPLY_TOOL = {
+    "name": "send_reply",
+    "description": "Draft a reply to send back to the customer. Use to acknowledge, ask for more information, or explain what is being done.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "draft": {"type": "string", "description": "The message text to send to the customer"},
+        },
+        "required": ["draft"],
+    },
+}
+
+WRITE_TOOLS = {"issue_refund", "create_ticket", "send_reply"}
+
+
+def plan(request_id: int, raw_text: str):          # now takes request_id
     messages = [{"role": "user", "content": raw_text}]
 
     for turn in range(5):
         response = client.messages.create(
             model=REASONING_MODEL,
             max_tokens=1000,
-            tools=[LOOKUP_ORDER_TOOL],
-            messages=messages
+            tools=[LOOKUP_ORDER_TOOL, ISSUE_REFUND_TOOL, CREATE_TICKET_TOOL, SEND_REPLY_TOOL],  # all four tools
+            messages=messages,
         )
 
         if response.stop_reason != "tool_use":
-            #Claude is done
             print("Final stop reason", response.stop_reason)
             for block in response.content:
                 if block.type == "text":
@@ -90,24 +136,31 @@ def plan(raw_text: str):
         messages.append({"role": "assistant", "content": response.content})
 
         tool_results = []
-
         for block in response.content:
             if block.type == "tool_use":
                 print("claude calls", block.name, "with", block.input)
 
                 if block.name == "lookup_order":
                     result = lookup_order(block.input["order_id"])
+                elif block.name in WRITE_TOOLS:
+                    proposed = propose_action(request_id, block.name, block.input)
+                    result = {
+                        "status": "proposed",
+                        "message": f"Action '{block.name}' has been proposed and is awaiting human approval. Do not assume it has been executed.",
+                        "proposed_action_id": proposed["id"],
+                    }
                 else:
                     result = {"error": f"Unknown tool: {block.name}"}
+
                 print(f"result: {result}")
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": json.dumps(result)
+                    "content": json.dumps(result),
                 })
 
         messages.append({"role": "user", "content": tool_results})
-        
+
     print("Hit turn limit")
     return None
 
