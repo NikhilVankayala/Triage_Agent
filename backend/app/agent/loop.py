@@ -112,7 +112,7 @@ SEND_REPLY_TOOL = {
     },
 }
 
-WRITE_TOOLS = {"issue_refund", "create_ticket", "send_reply"}
+WRITE_TOOLS = {"issue_refund", "create_ticket"}
 
 
 def plan(request_id: int, raw_text: str):          # now takes request_id
@@ -122,7 +122,7 @@ def plan(request_id: int, raw_text: str):          # now takes request_id
         response = client.messages.create(
             model=REASONING_MODEL,
             max_tokens=1000,
-            tools=[LOOKUP_ORDER_TOOL, ISSUE_REFUND_TOOL, CREATE_TICKET_TOOL, SEND_REPLY_TOOL],  # all four tools
+            tools=[LOOKUP_ORDER_TOOL, ISSUE_REFUND_TOOL, CREATE_TICKET_TOOL],  # all four tools
             messages=messages,
         )
 
@@ -164,3 +164,32 @@ def plan(request_id: int, raw_text: str):          # now takes request_id
     print("Hit turn limit")
     return None
 
+def generate_reply(raw_text: str, resolved_actions: list[dict]) -> str:
+    # Summarize what actually happened, for the model to ground its reply in.
+    if resolved_actions:
+        outcome_lines = []
+        for a in resolved_actions:
+            outcome_lines.append(f"- {a['tool_name']} ({a['status']}): {a['arguments']}")
+        outcomes = "\n".join(outcome_lines)
+    else:
+        outcomes = "No actions were taken."
+
+    response = client.messages.create(
+        model=REASONING_MODEL,
+        max_tokens=500,
+        system=(
+            "You are writing a customer support reply. Below is the customer's "
+            "original message and the actions that were actually taken in response "
+            "(some may have been approved/executed, some rejected). Write a concise, "
+            "friendly reply to the customer that accurately reflects ONLY what was "
+            "actually done. Do not claim anything was done if it was rejected or not taken. "
+            "Respond with ONLY the reply text, no preamble."
+        ),
+        messages=[
+            {
+                "role": "user",
+                "content": f"Customer message:\n{raw_text}\n\nActions taken:\n{outcomes}",
+            }
+        ],
+    )
+    return response.content[0].text

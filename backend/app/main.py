@@ -4,7 +4,7 @@ from psycopg.rows import dict_row
 from pydantic import BaseModel
 from app.db import get_connection
 from app.tools.index import resolve_action, store_classification, store_extracted_fields
-from app.agent.loop import plan, classify, extract_fields
+from app.agent.loop import plan, classify, extract_fields, generate_reply
 
 app = FastAPI()
 
@@ -100,3 +100,23 @@ def triage(request_id: int):
     plan(request_id, raw_text)
 
     return {"request_id": request_id, "classification": classification, "extracted": fields, "message": "Triage complete"}
+
+@app.post("/requests/{request_id}/finalize")
+def finalize(request_id: int):
+    with get_connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("SELECT id, raw_text FROM requests WHERE id = %s", (request_id,))
+            request = cur.fetchone()
+            if request is None:
+                raise HTTPException(status_code=404, detail="Request not found")
+
+            cur.execute(
+                "SELECT tool_name, arguments, status, result FROM proposed_actions "
+                "WHERE request_id = %s AND status IN ('executed', 'rejected') "
+                "ORDER BY id",
+                (request_id,),
+            )
+            resolved = cur.fetchall()
+
+    reply = generate_reply(request["raw_text"], resolved)
+    return {"request_id": request_id, "reply": reply}

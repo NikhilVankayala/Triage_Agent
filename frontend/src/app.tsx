@@ -22,6 +22,7 @@ function App() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [actions, setActions] = useState<Action[]>([]);
   const [newText, setNewText] = useState("");
+  const [reply, setReply] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Load the request list on mount.
@@ -47,9 +48,10 @@ function App() {
     loadRequests();
   }
 
-  // When a request is selected, load its proposed actions.
+  // When a request is selected, load its proposed actions and clear any old reply.
   function selectRequest(id: number) {
     setSelectedId(id);
+    setReply(null);
     loadActions(id);
   }
 
@@ -78,6 +80,18 @@ function App() {
       body: JSON.stringify({ decision }),
     });
     if (selectedId !== null) loadActions(selectedId);
+  }
+
+  // After actions are resolved, generate a customer reply reflecting the outcomes.
+  async function finalize(id: number) {
+    setBusy(true);
+    try {
+      const res = await fetch(`${API}/requests/${id}/finalize`, { method: "POST" });
+      const data = await res.json();
+      setReply(data.reply);
+    } finally {
+      setBusy(false);
+    }
   }
 
   const selectedRequest = requests.find((r) => r.id === selectedId);
@@ -171,6 +185,23 @@ function App() {
                 )}
               </div>
             ))}
+
+            {actions.length > 0 && (
+              <button
+                onClick={() => finalize(selectedRequest.id)}
+                disabled={busy}
+                style={{ padding: "8px 16px", marginTop: 12, cursor: "pointer" }}
+              >
+                {busy ? "Generating…" : "Finalize & draft reply"}
+              </button>
+            )}
+
+            {reply && (
+              <div style={{ marginTop: 16, padding: 12, border: "1px solid #333", borderRadius: 8 }}>
+                <div style={{ fontWeight: 600, marginBottom: 6 }}>Customer reply</div>
+                <div style={{ whiteSpace: "pre-wrap", opacity: 0.9 }}>{reply}</div>
+              </div>
+            )}
           </>
         ) : (
           <p style={{ opacity: 0.6 }}>Select a request to see its proposed actions.</p>
